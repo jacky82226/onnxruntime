@@ -181,11 +181,11 @@ struct ConvTransposeAttributes : public ConvAttributes {
       ORT_ENFORCE(*out_size >= 0);
       // total padding size
       int64_t paddings = std::max<int64_t>(0, (in_size - 1) * stride + adj + (kernel - 1) * dilation + 1 - *out_size);
-      if (pad_type == AutoPadType::SAME_UPPER) {  // pad more on head when paddings are odd.
+      if (pad_type == AutoPadType::SAME_LOWER) {  // pad more on head when paddings are odd.
         *pad_head = paddings - paddings / 2;
         *pad_tail = paddings / 2;
       } else {
-        // for pad_type is NOTSET, SAME_LOWER or VALID
+        // for pad_type is NOTSET, SAME_UPPER or VALID
         // set pad_head as paddings/2, pad_tail as paddings-paddings/2.
         // That said, we pad more on tail when paddings are odd.
         *pad_head = paddings / 2;
