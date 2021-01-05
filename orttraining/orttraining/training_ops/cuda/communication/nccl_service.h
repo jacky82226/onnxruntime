@@ -1,7 +1,7 @@
 // Copyright (c) Microsoft Corporation. All rights reserved.
 // Licensed under the MIT License.
 
-#if defined(USE_NCCL) && defined(USE_NCCL_P2P)
+#if defined(ORT_USE_NCCL) && defined(USE_NCCL_P2P)
 
 #pragma once
 #include <condition_variable>
@@ -156,6 +156,7 @@ class NcclService final {
   std::condition_variable cv_;
 
   // Stream for running NCCL.
+  cudaStream_t stream_;
   ncclComm_t comm_;
 
   // Indicates if NCCL service launched.
