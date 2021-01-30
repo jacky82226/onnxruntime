@@ -6,6 +6,8 @@
 
 #include <core/graph/graph.h>
 
+#include "core/providers/common.h"
+#include "core/providers/shared/utils/utils.h"
 #include "helper.h"
 #include "op_support_checker.h"
 
@@ -194,6 +196,7 @@ class BinaryOpSupportChecker : public BaseOpSupportChecker {
           "Mul",
           "Div",
           "QLinearAdd",
+          "Pow",
       });
 }
 
@@ -203,13 +206,18 @@ int32_t BinaryOpSupportChecker::GetMinSupportedSdkVer(
   if (op == "Sub" || op == "Div") {
     return 28;
   }
+
+  if (op == "Pow") {
+    return 29;
+  }
+
   return 27;
 }
 
 int BinaryOpSupportChecker::GetMinSupportedOpSet(const Node& node) const {
   const auto& op(node.OpType());
 
-  // Add/Sub/Mul/Div opset 6- has broadcast attributes we do not support now
+  // Add/Sub/Mul/Div/Pow opset 6- has broadcast attributes we do not support now
   if (op != "QLinearAdd")
     return 7;
 
@@ -217,12 +225,37 @@ int BinaryOpSupportChecker::GetMinSupportedOpSet(const Node& node) const {
 }
 
 bool BinaryOpSupportChecker::HasSupportedInputsImpl(const Node& node) const {
-  if (node.OpType() != "QLinearAdd")
+  bool is_qlinear_add = node.OpType() == "QLinearAdd";
+  bool is_pow = node.OpType() == "Pow";
+  if (!is_qlinear_add && !is_pow)
     return BaseOpSupportChecker::HasSupportedInputsImpl(node);
 
-  // QLinearAdd
-  if (!HasValidBinaryOpQuantizedInputs(node))
-    return false;
+  if (is_qlinear_add) {
+    // QLinearAdd
+    if (!HasValidBinaryOpQuantizedInputs(node))
+      return false;
+  }
+
+  // Pow we only support both input as fp32 now
+  if (is_pow) {
+    const auto& input1 = *node.InputDefs()[0];
+    const auto& input2 = *node.InputDefs()[1];
+
+    int32_t input_type_1;
+    if (!GetType(input1, input_type_1))
+      return false;
+
+    int32_t input_type_2;
+    if (!GetType(input2, input_type_2))
+      return false;
+
+    if (input_type_1 != ONNX_NAMESPACE::TensorProto_DataType_FLOAT || input_type_1 != input_type_2) {
+      LOGS_DEFAULT(VERBOSE) << "Pow only supports fp32 inputs, actual input type"
+                            << ", Input type 1: " << input_type_1
+                            << ", Input type 2: " << input_type_2;
+      return false;
+    }
+  }
 
   return true;
 }
@@ -998,7 +1031,7 @@ class QuantizeLinearOpSupportChecker : public BaseOpSupportChecker {
                          const OpSupportCheckParams& params) const override;
 
   int32_t GetMinSupportedSdkVer(const Node& /* node */, const OpSupportCheckParams& /* params */) const override {
-    return 27;
+    return 29;
   }
 };
 
@@ -1039,7 +1072,7 @@ class DequantizeLinearOpSupportChecker : public BaseOpSupportChecker {
                          const OpSupportCheckParams& params) const override;
 
   int32_t GetMinSupportedSdkVer(const Node& /* node */, const OpSupportCheckParams& /* params */) const override {
-    return 29;
+    return 27;
   }
   bool HasSupportedInputsImpl(const Node& node) const override;
 };
@@ -1362,6 +1395,7 @@ static OpSupportCheckerRegistrations CreateOpSupportCheckerRegistrations() {
     NNAPI_EP_ADD_SHARED_OP_SUPPORT_CHECKER("Mul", BinaryOpSupportChecker);
     NNAPI_EP_ADD_SHARED_OP_SUPPORT_CHECKER("Div", BinaryOpSupportChecker);
     NNAPI_EP_ADD_SHARED_OP_SUPPORT_CHECKER("QLinearAdd", BinaryOpSupportChecker);
+    NNAPI_EP_ADD_SHARED_OP_SUPPORT_CHECKER("Pow", BinaryOpSupportChecker);
   }
 
   // Relu is always supported, we use BaseOpSupportChecker as default
