@@ -545,6 +545,7 @@ int real_main(int argc, char* argv[], Ort::Env& env) {
       {"sequence_insert_at_back", "onnx currently not supporting loading segment", {}},
       {"sequence_insert_at_front", "onnx currently not supporting loading segment", {}},
       {"loop13_seq", "ORT api does not currently support creating empty sequences (needed for this test)", {}},
+      {"cntk_simple_seg", "Bad onnx test output caused by wrong SAME_UPPER/SAME_LOWER for ConvTranspose", {}},
   };
 
 #ifdef DISABLE_ML_OPS
