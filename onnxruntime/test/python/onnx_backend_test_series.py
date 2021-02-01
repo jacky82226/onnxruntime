@@ -48,7 +48,7 @@ def create_backend_test(testname=None):
     else:
         # read filters data
         with open(
-                os.path.join(os.path.dirname(os.path.realpath(__file__)), '../testdata',
+                os.path.join(os.path.dirname(os.path.realpath(__file__)), 'testdata',
                              'onnx_backend_test_series_filters.jsonc')) as f:
             filters_lines = f.readlines()
         filters_lines = [x.split('//')[0] for x in filters_lines]
