@@ -51,7 +51,7 @@
         "^test_resize_upsample_sizes_nearest_ceil_half_pixel_cpu",
         "^test_resize_upsample_sizes_nearest_cpu",
         "^test_resize_upsample_sizes_nearest_floor_align_corners_cpu",
-        "^test_resize_upsample_sizes_nearest_round_prefer_ceil_asymmetric_cpu",
+        "^test_resize_upsample_sizes_nearest_round_prefer_ceil_asymmetric_cpu"
         //"^test_convtranspose_autopad_same" // result mismatch due to SAME_UPPER/SAME_LOWER; will submita PR in ONNX to update
     ],
     "current_failing_tests_x86": [
