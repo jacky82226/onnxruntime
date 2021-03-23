@@ -3,7 +3,7 @@
 
 #pragma once
 
-#ifndef PROVIDER_BRIDGE_PROVIDER
+#ifndef SHARED_PROVIDER
 #include <unordered_map>
 #include <unordered_set>
 
@@ -164,6 +164,9 @@ class IExecutionProvider {
      clean up its temporary resources to reduce memory and ensure the first run is fast.
   */
   virtual common::Status OnSessionInitializationEnd() { return Status::OK(); }
+
+  virtual common::Status SetComputeStream(void*) { return Status::OK(); }
+  virtual void* GetComputeStream() const { return nullptr; }
 
   void InsertAllocator(AllocatorPtr allocator);
   void ReplaceAllocator(AllocatorPtr allocator);

@@ -23,6 +23,7 @@ ENV OpenCV_DIR=${INTEL_OPENVINO_DIR}/opencv/share/OpenCV
 ENV LD_LIBRARY_PATH=${INTEL_OPENVINO_DIR}/opencv/lib:${INTEL_OPENVINO_DIR}/opencv/share/OpenCV/3rdparty/lib:${LD_LIBRARY_PATH}
 ENV HDDL_INSTALL_DIR=${INTEL_OPENVINO_DIR}/deployment_tools/inference_engine/external/hddl
 ENV LD_LIBRARY_PATH=${INTEL_OPENVINO_DIR}/deployment_tools/inference_engine/external/hddl/lib:$LD_LIBRARY_PATH
+ENV ngraph_DIR=${INTEL_OPENVINO_DIR}/deployment_tools/ngraph/cmake
 ENV LANG en_US.UTF-8
 ENV DEBIAN_FRONTEND=noninteractive
 
@@ -84,7 +85,7 @@ RUN apt update && apt -y install --no-install-recommends apt-transport-https ca-
     git clone --recursive -b ${ONNXRUNTIME_BRANCH} ${ONNXRUNTIME_REPO} && \
     /bin/sh onnxruntime/dockerfiles/scripts/install_common_deps.sh && \
     cd onnxruntime/cmake/external/onnx && python3 setup.py install && \
-    cd ${MY_ROOT}/onnxruntime && ./build.sh --config Release --update --build --parallel --use_openvino ${DEVICE} --build_wheel && \
+    cd ${MY_ROOT}/onnxruntime && ./build.sh --config Release --update --build --parallel --use_openvino ${DEVICE} --build_shared_lib --build_wheel && \
     pip install build/Linux/Release/dist/*-linux_x86_64.whl && \
     cd ${MY_ROOT}/ && rm -rf onnxruntime && cd /opt && rm -rf v1.0.22.zip && cd ${MY_ROOT} &&\
     apt remove -y cmake && cd /usr/share/python-wheels/ && rm -rf *.whl &&\

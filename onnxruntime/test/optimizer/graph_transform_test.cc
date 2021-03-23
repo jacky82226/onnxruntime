@@ -19,6 +19,7 @@
 #include "core/optimizer/bias_softmax_fusion.h"
 #include "core/optimizer/computation_reduction.h"
 #include "core/optimizer/cast_elimination.h"
+#include "core/optimizer/common_subexpression_elimination.h"
 #include "core/optimizer/concat_slice_elimination.h"
 #include "core/optimizer/constant_folding.h"
 #include "core/optimizer/conv_activation_fusion.h"
@@ -35,6 +36,7 @@
 #include "core/optimizer/gemm_activation_fusion.h"
 #include "core/optimizer/graph_transformer.h"
 #include "core/optimizer/graph_transformer_mgr.h"
+#include "core/optimizer/graph_transformer_utils.h"
 #include "core/optimizer/identity_elimination.h"
 #include "core/optimizer/initializer.h"
 #include "core/optimizer/layer_norm_fusion.h"
@@ -52,6 +54,7 @@
 #include "core/optimizer/utils.h"
 #include "core/platform/env.h"
 #include "core/session/inference_session.h"
+#include "core/session/onnxruntime_session_options_config_keys.h"
 #include "core/util/math.h"
 #include "gtest/gtest.h"
 #include "test/capturing_sink.h"
@@ -145,7 +148,7 @@ TEST_F(GraphTransformationTests, ConstantFolding) {
   std::unique_ptr<CPUExecutionProvider> e =
       onnxruntime::make_unique<CPUExecutionProvider>(CPUExecutionProviderInfo());
   onnxruntime::GraphTransformerManager graph_transformation_mgr{5};
-  graph_transformation_mgr.Register(onnxruntime::make_unique<ConstantFolding>(*e.get()), TransformerLevel::Level1);
+  graph_transformation_mgr.Register(onnxruntime::make_unique<ConstantFolding>(*e.get(), false /*skip_dequantize_linear*/), TransformerLevel::Level1);
 
   ASSERT_STATUS_OK(graph_transformation_mgr.ApplyTransformers(graph, TransformerLevel::Level1, *logger_));
 
@@ -163,7 +166,7 @@ TEST_F(GraphTransformationTests, ConstantFoldingNodesOnDifferentEP) {
   std::unique_ptr<CPUExecutionProvider> e =
       onnxruntime::make_unique<CPUExecutionProvider>(CPUExecutionProviderInfo());
   onnxruntime::GraphTransformerManager graph_transformation_mgr{5};
-  graph_transformation_mgr.Register(onnxruntime::make_unique<ConstantFolding>(*e.get()), TransformerLevel::Level1);
+  graph_transformation_mgr.Register(onnxruntime::make_unique<ConstantFolding>(*e.get(), false /*skip_dequantize_linear*/), TransformerLevel::Level1);
 
   // assign all nodes to CUDA. the constant folding should override this to perform the constant folding on cpu
   for (auto& node : graph.Nodes()) {
@@ -244,7 +247,7 @@ TEST_F(GraphTransformationTests, ConstantFoldingSubgraph) {
   std::unique_ptr<CPUExecutionProvider> e =
       onnxruntime::make_unique<CPUExecutionProvider>(CPUExecutionProviderInfo());
   onnxruntime::GraphTransformerManager graph_transformation_mgr{5};
-  graph_transformation_mgr.Register(onnxruntime::make_unique<ConstantFolding>(*e.get()), TransformerLevel::Level1);
+  graph_transformation_mgr.Register(onnxruntime::make_unique<ConstantFolding>(*e.get(), false /*skip_dequantize_linear*/), TransformerLevel::Level1);
 
   ASSERT_STATUS_OK(graph_transformation_mgr.ApplyTransformers(graph, TransformerLevel::Level1, *logger_));
 
@@ -269,7 +272,11 @@ TEST_F(GraphTransformationTests, ConstantFoldingWithShapeToInitializer) {
   onnxruntime::GraphTransformerManager graph_transformation_mgr{5};
   std::unique_ptr<CPUExecutionProvider> e =
       onnxruntime::make_unique<CPUExecutionProvider>(CPUExecutionProviderInfo());
-  graph_transformation_mgr.Register(onnxruntime::make_unique<ConstantFolding>(*e.get(), compatible_eps, excluded_initializers), TransformerLevel::Level1);
+  graph_transformation_mgr.Register(onnxruntime::make_unique<ConstantFolding>(*e.get(),
+                                                                              false /*skip_dequantize_linear*/,
+                                                                              compatible_eps,
+                                                                              excluded_initializers),
+                                    TransformerLevel::Level1);
 
   ASSERT_TRUE(graph_transformation_mgr.ApplyTransformers(graph, TransformerLevel::Level1, *logger_).IsOK());
 
@@ -293,7 +300,10 @@ TEST_F(GraphTransformationTests, ConstantFoldingWithScalarShapeToInitializer) {
   onnxruntime::GraphTransformerManager graph_transformation_mgr{5};
   std::unique_ptr<CPUExecutionProvider> e =
       onnxruntime::make_unique<CPUExecutionProvider>(CPUExecutionProviderInfo());
-  graph_transformation_mgr.Register(onnxruntime::make_unique<ConstantFolding>(*e.get(), compatible_eps), TransformerLevel::Level1);
+  graph_transformation_mgr.Register(onnxruntime::make_unique<ConstantFolding>(*e.get(),
+                                                                              false /*skip_dequantize_linear*/,
+                                                                              compatible_eps),
+                                    TransformerLevel::Level1);
 
   ASSERT_TRUE(graph_transformation_mgr.ApplyTransformers(graph, TransformerLevel::Level1, *logger_).IsOK());
 
@@ -301,6 +311,80 @@ TEST_F(GraphTransformationTests, ConstantFoldingWithScalarShapeToInitializer) {
   ASSERT_TRUE(op_to_count["Shape"] == 0);
   ASSERT_TRUE(op_to_count["ConstantOfShape"] == 0);
   ASSERT_TRUE(op_to_count["Add"] == 1);
+}
+
+static void VerifyConstantFoldingWithDequantizeLinear(int quantize_linear_count,
+                                                      int dequantize_linear_count,
+                                                      int conv_count,
+                                                      Graph& graph,
+                                                      SessionOptions& session_options,
+                                                      const Logger& logger) {
+  std::unique_ptr<CPUExecutionProvider> e =
+      onnxruntime::make_unique<CPUExecutionProvider>(CPUExecutionProviderInfo());
+
+  bool has_constant_folding = false;
+  onnxruntime::GraphTransformerManager graph_transformation_mgr{5};
+  auto transformers = optimizer_utils::GenerateTransformers(TransformerLevel::Level1, session_options, *e.get(), {});
+  for (auto& transformer : transformers) {
+    if (transformer->Name() == "ConstantFolding") {
+      graph_transformation_mgr.Register(std::move(transformer), TransformerLevel::Level1);
+      has_constant_folding = true;
+    }
+  }
+
+  ASSERT_TRUE(has_constant_folding);
+  ASSERT_TRUE(graph_transformation_mgr.ApplyTransformers(graph, TransformerLevel::Level1, logger).IsOK());
+
+  std::map<std::string, int> op_to_count = CountOpsInGraph(graph);
+  ASSERT_TRUE(op_to_count["QuantizeLinear"] == quantize_linear_count);
+  ASSERT_TRUE(op_to_count["DequantizeLinear"] == dequantize_linear_count);
+  ASSERT_TRUE(op_to_count["Conv"] == conv_count);
+}
+
+TEST_F(GraphTransformationTests, ConstantFoldingWithDequantizeLinear) {
+  auto model_uri = MODEL_FOLDER "fusion/constant_folding_dequantizelinear.onnx";
+  std::shared_ptr<Model> model;
+  ASSERT_TRUE(Model::Load(model_uri, model, nullptr, *logger_).IsOK());
+  Graph& graph = model->MainGraph();
+  std::map<std::string, int> op_to_count = CountOpsInGraph(graph);
+  ASSERT_TRUE(op_to_count["QuantizeLinear"] == 1);
+  ASSERT_TRUE(op_to_count["DequantizeLinear"] == 3);
+  ASSERT_TRUE(op_to_count["Conv"] == 1);
+
+  SessionOptions session_options;
+  // Check DequantizeLinear aren't constant folded for default setting.
+  VerifyConstantFoldingWithDequantizeLinear(1, 3, 1, graph, session_options, *logger_);
+
+  // set SessionOptionsEnableQuantQDQ to enable it explicitly
+  session_options.AddConfigEntry(kOrtSessionOptionsEnableQuantQDQ, "1");
+  VerifyConstantFoldingWithDequantizeLinear(1, 3, 1, graph, session_options, *logger_);
+
+  // set SessionOptionsEnableQuantQDQ to disable it
+  session_options.AddConfigEntry(kOrtSessionOptionsEnableQuantQDQ, "0");
+  VerifyConstantFoldingWithDequantizeLinear(1, 1, 1, graph, session_options, *logger_);
+}
+
+TEST_F(GraphTransformationTests, ConstantFolding_RemoveDanglingInputNodesToConstantFoldedNode) {
+  auto model_uri = MODEL_FOLDER "fusion/constant_folding_remove_dangling_inputs.onnx";
+  std::shared_ptr<Model> model;
+  ASSERT_TRUE(Model::Load(model_uri, model, nullptr, *logger_).IsOK());
+  Graph& graph = model->MainGraph();
+  std::map<std::string, int> op_to_count = CountOpsInGraph(graph);
+  ASSERT_TRUE(op_to_count["Shape"] == 1);          // Shape node that will be constant folded
+  ASSERT_TRUE(op_to_count["Add"] == 1);            // Input node to Shape
+  ASSERT_TRUE(op_to_count["RandomUniform"] == 1);  // Input node to Add
+
+  std::unique_ptr<CPUExecutionProvider> e =
+      onnxruntime::make_unique<CPUExecutionProvider>(CPUExecutionProviderInfo());
+  onnxruntime::GraphTransformerManager graph_transformation_mgr{5};
+  graph_transformation_mgr.Register(onnxruntime::make_unique<ConstantFolding>(*e.get(), false /*skip_dequantize_linear*/), TransformerLevel::Level1);
+
+  ASSERT_STATUS_OK(graph_transformation_mgr.ApplyTransformers(graph, TransformerLevel::Level1, *logger_));
+
+  op_to_count = CountOpsInGraph(graph);
+  ASSERT_TRUE(op_to_count["Shape"] == 0);
+  ASSERT_TRUE(op_to_count["Add"] == 0);
+  ASSERT_TRUE(op_to_count["RandomUniform"] == 0);
 }
 
 TEST_F(GraphTransformationTests, ShapeToInitializer) {
@@ -758,6 +842,35 @@ TEST_F(GraphTransformationTests, TransposeMatmulFusion) {
   ASSERT_TRUE(op_to_count["Transpose"] == 0);
   ASSERT_TRUE(op_to_count["MatMul"] == 0);
   ASSERT_TRUE(op_to_count["com.microsoft.FusedMatMul"] == 1);
+}
+
+TEST_F(GraphTransformationTests, TransposeCastMatmulFusion) {
+  const std::vector<PathString> model_uris = {
+      MODEL_FOLDER "fusion/transpose_cast_matmul_4d_fusion0.onnx", // Test fusion from the right input
+      MODEL_FOLDER "fusion/transpose_cast_matmul_4d_fusion1.onnx", // Test fusion from the left input
+      MODEL_FOLDER "fusion/transpose_cast_matmul_4d_fusion2.onnx", // Test fusion both from the left and right inputs
+      MODEL_FOLDER "fusion/transpose_cast_matmul_4d_fusion3.onnx", // Cast nodes feed multiple MatMul nodes.
+      MODEL_FOLDER "fusion/transpose_cast_matmul_4d_fusion4.onnx", // Cast nodes feed one MatMul node and
+                                                                   // the Transpose nodes feed another MatMul node.
+      MODEL_FOLDER "fusion/transpose_cast_matmul_4d_fusion5.onnx"  // One Cast node and one Transpose node feed each
+                                                                   // MatMul nodes.
+  };
+  for (const auto& model_uri : model_uris) {
+    std::shared_ptr<Model> p_model;
+    ASSERT_TRUE(Model::Load(model_uri, p_model, nullptr, *logger_).IsOK());
+    Graph& graph = p_model->MainGraph();
+    std::map<std::string, int> orig_op_to_count = CountOpsInGraph(graph); // Original op count
+
+    onnxruntime::GraphTransformerManager graph_transformation_mgr{5};
+    graph_transformation_mgr.Register(onnxruntime::make_unique<MatmulTransposeFusion>(), TransformerLevel::Level1);
+    auto ret = graph_transformation_mgr.ApplyTransformers(graph, TransformerLevel::Level1, *logger_);
+    ASSERT_TRUE(ret.IsOK());
+    std::map<std::string, int> op_to_count = CountOpsInGraph(graph);
+    ASSERT_TRUE(op_to_count["Transpose"] == 0);
+    ASSERT_TRUE(op_to_count["MatMul"] == 0);
+    ASSERT_TRUE(op_to_count["Cast"] == orig_op_to_count["Cast"]);
+    ASSERT_TRUE(op_to_count["com.microsoft.FusedMatMul"] == orig_op_to_count["MatMul"]);
+  }
 }
 
 TEST_F(GraphTransformationTests, TransposeMatmulFusionOnTwoTranspose) {
@@ -1932,7 +2045,6 @@ TEST_F(GraphTransformationTests, AttentionFusionWithPastAndUnidirMaskTest) {
   EXPECT_EQ(op_to_count["Softmax"], 0);
   EXPECT_EQ(op_to_count["com.microsoft.Attention"], 1);
 
-
   GraphViewer graph_viewer(graph);
   const auto& node_topology_list = graph_viewer.GetNodesInTopologicalOrder();
 
@@ -2420,6 +2532,34 @@ TEST_F(GraphTransformationTests, FastGeluWithBiasUseGraphInputFusionTest2) {
   ASSERT_TRUE(op_to_count["com.microsoft.FastGelu"] == 1);
 }
 
+TEST_F(GraphTransformationTests, FastGeluFusionWithCastsTest3) {
+  auto model_uri = MODEL_FOLDER "fusion/fast_gelu3_with_casts.onnx";
+  std::shared_ptr<Model> p_model;
+  auto load_ret = Model::Load(model_uri, p_model, nullptr, *logger_);
+  ASSERT_TRUE(load_ret.IsOK());
+  Graph& graph = p_model->MainGraph();
+
+  // ORTModule for gpt2 model has two casts fused into one before FastGeluFusion
+  onnxruntime::GraphTransformerManager graph_transformation_mgr{5};
+  graph_transformation_mgr.Register(onnxruntime::make_unique<CommonSubexpressionElimination>(), TransformerLevel::Level1);
+  ASSERT_STATUS_OK(graph_transformation_mgr.ApplyTransformers(graph, TransformerLevel::Level1, *logger_));
+
+  std::map<std::string, int> op_to_count = CountOpsInGraph(graph);
+  ASSERT_TRUE(op_to_count["Cast"] == 2);
+
+  graph_transformation_mgr.Register(onnxruntime::make_unique<FastGeluFusion>(), TransformerLevel::Level2);
+  auto ret = graph_transformation_mgr.ApplyTransformers(graph, TransformerLevel::Level2, *logger_);
+  ASSERT_TRUE(ret.IsOK());
+
+  op_to_count = CountOpsInGraph(graph);
+  ASSERT_TRUE(op_to_count["Add"] == 0);
+  ASSERT_TRUE(op_to_count["Tanh"] == 0);
+  ASSERT_TRUE(op_to_count["Mul"] == 0);
+  ASSERT_TRUE(op_to_count["Cast"] == 1);
+  ASSERT_TRUE(op_to_count["com.microsoft.FastGelu"] == 1);
+}
+
+
 struct BiasSoftmaxFusionTester {
   std::shared_ptr<Model> p_model_;
   Status model_load_;
@@ -2608,6 +2748,23 @@ TEST_F(GraphTransformationTests, LayerNormWithCastFusionTest) {
 #endif
 }
 
+TEST_F(GraphTransformationTests, LayerNormWithCastFusionTest_2) {
+  auto model_uri = MODEL_FOLDER "fusion/layer_norm_with_cast_2.onnx";
+  std::shared_ptr<Model> p_model;
+  ASSERT_STATUS_OK(Model::Load(model_uri, p_model, nullptr, *logger_));
+  Graph& graph = p_model->MainGraph();
+
+  onnxruntime::GraphTransformerManager graph_transformation_mgr{5};
+  graph_transformation_mgr.Register(onnxruntime::make_unique<LayerNormFusion>(), TransformerLevel::Level2);
+  auto ret = graph_transformation_mgr.ApplyTransformers(graph, TransformerLevel::Level2, *logger_);
+  ASSERT_TRUE(ret.IsOK());
+
+  std::map<std::string, int> op_to_count = CountOpsInGraph(graph);
+
+  ASSERT_TRUE(op_to_count["Cast"] == 0);
+  ASSERT_TRUE(op_to_count["LayerNormalization"] == 1);
+}
+
 TEST_F(GraphTransformationTests, LayerNormWithSubDupFusionTest) {
   auto model_uri = MODEL_FOLDER "fusion/layer_norm_sub_dup.onnx";
   std::shared_ptr<Model> p_model;
@@ -2751,6 +2908,23 @@ TEST_F(GraphTransformationTests, SkipLayerNormFusion_Input_Output_Check) {
   }
 }
 
+TEST_F(GraphTransformationTests, SkipLayerNormFusion_NoBeta) {
+  auto model_uri = MODEL_FOLDER "fusion/skip_layer_norm_no_beta.onnx";
+  std::shared_ptr<Model> p_model;
+  ASSERT_STATUS_OK(Model::Load(model_uri, p_model, nullptr, *logger_));
+  Graph& graph = p_model->MainGraph();
+
+  onnxruntime::GraphTransformerManager graph_transformation_mgr{5};
+  graph_transformation_mgr.Register(onnxruntime::make_unique<SkipLayerNormFusion>(), TransformerLevel::Level2);
+  auto ret = graph_transformation_mgr.ApplyTransformers(graph, TransformerLevel::Level2, *logger_);
+  ASSERT_TRUE(ret.IsOK());
+
+  std::map<std::string, int> op_to_count = CountOpsInGraph(graph);
+  ASSERT_TRUE(op_to_count["Add"] == 0);
+  ASSERT_TRUE(op_to_count["LayerNormalization"] == 0);
+  ASSERT_TRUE(op_to_count["com.microsoft.SkipLayerNormalization"] == 1);
+}
+
 TEST_F(GraphTransformationTests, EmbedLayerNormFusionFormat1) {
   auto model_uri = MODEL_FOLDER "fusion/embed_layer_norm_format1.onnx";
   std::shared_ptr<Model> p_model;
@@ -2798,15 +2972,47 @@ TEST_F(GraphTransformationTests, EmbedLayerNormFusionFormat2) {
   ASSERT_TRUE(op_to_count["com.microsoft.EmbedLayerNormalization"] == 1);
 }
 
-TEST_F(GraphTransformationTests, EmbedLayerNormFusionFormat3) {
-  auto model_uri = MODEL_FOLDER "fusion/embed_layer_norm_format3.onnx";
+static void EmbedLayerNormFusionFormat3(const std::basic_string<ORTCHAR_T>& file_path, logging::Logger* logger) {
   std::shared_ptr<Model> p_model;
-  ASSERT_STATUS_OK(Model::Load(model_uri, p_model, nullptr, *logger_));
+  ASSERT_TRUE(Model::Load(file_path, p_model, nullptr, *logger).IsOK());
   Graph& graph = p_model->MainGraph();
 
   onnxruntime::GraphTransformerManager graph_transformation_mgr{5};
   graph_transformation_mgr.Register(onnxruntime::make_unique<EmbedLayerNormFusion>(), TransformerLevel::Level2);
-  auto ret = graph_transformation_mgr.ApplyTransformers(graph, TransformerLevel::Level2, *logger_);
+  auto ret = graph_transformation_mgr.ApplyTransformers(graph, TransformerLevel::Level2, *logger);
+  ASSERT_TRUE(ret.IsOK());
+
+  std::map<std::string, int> op_to_count = CountOpsInGraph(graph);
+  EXPECT_EQ(op_to_count["Shape"], 0);
+  EXPECT_EQ(op_to_count["Expand"], 0);
+  EXPECT_EQ(op_to_count["Gather"], 0);
+  EXPECT_EQ(op_to_count["Unsqueeze"], 0);
+  EXPECT_EQ(op_to_count["LayerNormalization"], 0);
+  EXPECT_EQ(op_to_count["com.microsoft.SkipLayerNormalization"], 0);
+  EXPECT_EQ(op_to_count["ReduceSum"], 1);
+  EXPECT_EQ(op_to_count["MatMul"], 1);
+  EXPECT_EQ(op_to_count["Add"], 2);
+  EXPECT_EQ(op_to_count["Cast"], 3);
+  EXPECT_EQ(op_to_count["com.microsoft.Attention"], 1);
+  EXPECT_EQ(op_to_count["com.microsoft.EmbedLayerNormalization"], 1);
+}
+
+TEST_F(GraphTransformationTests, EmbedLayerNormFusionFormat3) {
+  EmbedLayerNormFusionFormat3(MODEL_FOLDER "fusion/embed_layer_norm_format3.onnx", logger_.get());
+}
+
+TEST_F(GraphTransformationTests, EmbedLayerNormFusionFormat3_OpSet13) {
+  EmbedLayerNormFusionFormat3(MODEL_FOLDER "fusion/embed_layer_norm_format3_opset13.onnx", logger_.get());
+}
+
+static void EmbedLayerNormFusionFormat3NoCast(const std::basic_string<ORTCHAR_T>& file_path, logging::Logger* logger) {
+  std::shared_ptr<Model> p_model;
+  ASSERT_TRUE(Model::Load(file_path, p_model, nullptr, *logger).IsOK());
+  Graph& graph = p_model->MainGraph();
+
+  onnxruntime::GraphTransformerManager graph_transformation_mgr{5};
+  graph_transformation_mgr.Register(onnxruntime::make_unique<EmbedLayerNormFusion>(), TransformerLevel::Level2);
+  auto ret = graph_transformation_mgr.ApplyTransformers(graph, TransformerLevel::Level2, *logger);
   ASSERT_TRUE(ret.IsOK());
 
   std::map<std::string, int> op_to_count = CountOpsInGraph(graph);
@@ -2825,29 +3031,11 @@ TEST_F(GraphTransformationTests, EmbedLayerNormFusionFormat3) {
 }
 
 TEST_F(GraphTransformationTests, EmbedLayerNormFusionFormat3NoCast) {
-  auto model_uri = MODEL_FOLDER "fusion/embed_layer_norm_format3_no_cast.onnx";
-  std::shared_ptr<Model> p_model;
-  ASSERT_STATUS_OK(Model::Load(model_uri, p_model, nullptr, *logger_));
-  Graph& graph = p_model->MainGraph();
+  EmbedLayerNormFusionFormat3NoCast(MODEL_FOLDER "fusion/embed_layer_norm_format3_no_cast.onnx", logger_.get());
+}
 
-  onnxruntime::GraphTransformerManager graph_transformation_mgr{5};
-  graph_transformation_mgr.Register(onnxruntime::make_unique<EmbedLayerNormFusion>(), TransformerLevel::Level2);
-  auto ret = graph_transformation_mgr.ApplyTransformers(graph, TransformerLevel::Level2, *logger_);
-  ASSERT_TRUE(ret.IsOK());
-
-  std::map<std::string, int> op_to_count = CountOpsInGraph(graph);
-  EXPECT_EQ(op_to_count["Shape"], 0);
-  EXPECT_EQ(op_to_count["Expand"], 0);
-  EXPECT_EQ(op_to_count["Gather"], 0);
-  EXPECT_EQ(op_to_count["Unsqueeze"], 0);
-  EXPECT_EQ(op_to_count["LayerNormalization"], 0);
-  EXPECT_EQ(op_to_count["com.microsoft.SkipLayerNormalization"], 0);
-  EXPECT_EQ(op_to_count["ReduceSum"], 1);
-  EXPECT_EQ(op_to_count["MatMul"], 1);
-  EXPECT_EQ(op_to_count["Add"], 2);
-  EXPECT_EQ(op_to_count["Cast"], 3);
-  EXPECT_EQ(op_to_count["com.microsoft.Attention"], 1);
-  EXPECT_EQ(op_to_count["com.microsoft.EmbedLayerNormalization"], 1);
+TEST_F(GraphTransformationTests, EmbedLayerNormFusionFormat3NoCast_OpSet13) {
+  EmbedLayerNormFusionFormat3NoCast(MODEL_FOLDER "fusion/embed_layer_norm_format3_no_cast_opset13.onnx", logger_.get());
 }
 
 TEST_F(GraphTransformationTests, EmbedLayerNormFusionFormat4) {
@@ -2878,15 +3066,14 @@ TEST_F(GraphTransformationTests, EmbedLayerNormFusionFormat4) {
   ASSERT_TRUE(op_to_count["com.microsoft.EmbedLayerNormalization"] == 1);
 }
 
-TEST_F(GraphTransformationTests, EmbedLayerNormFusionFormat5) {
-  auto model_uri = MODEL_FOLDER "fusion/embed_layer_norm_format5.onnx";
+static void EmbedLayerNormFusionFormat5(const std::basic_string<ORTCHAR_T>& file_path, logging::Logger* logger) {
   std::shared_ptr<Model> p_model;
-  ASSERT_STATUS_OK(Model::Load(model_uri, p_model, nullptr, *logger_));
+  ASSERT_TRUE(Model::Load(file_path, p_model, nullptr, *logger).IsOK());
   Graph& graph = p_model->MainGraph();
 
   onnxruntime::GraphTransformerManager graph_transformation_mgr{5};
   graph_transformation_mgr.Register(onnxruntime::make_unique<EmbedLayerNormFusion>(), TransformerLevel::Level2);
-  auto ret = graph_transformation_mgr.ApplyTransformers(graph, TransformerLevel::Level2, *logger_);
+  auto ret = graph_transformation_mgr.ApplyTransformers(graph, TransformerLevel::Level2, *logger);
   ASSERT_TRUE(ret.IsOK());
 
   std::map<std::string, int> op_to_count = CountOpsInGraph(graph);
@@ -2920,15 +3107,22 @@ TEST_F(GraphTransformationTests, EmbedLayerNormFusionFormat5) {
   }
 }
 
-TEST_F(GraphTransformationTests, EmbedLayerNormFusionFormat6) {
-  auto model_uri = MODEL_FOLDER "fusion/embed_layer_norm_format6.onnx";
+TEST_F(GraphTransformationTests, EmbedLayerNormFusionFormat5) {
+  EmbedLayerNormFusionFormat5(MODEL_FOLDER "fusion/embed_layer_norm_format5.onnx", logger_.get());
+}
+
+TEST_F(GraphTransformationTests, EmbedLayerNormFusionFormat5_OpSet13) {
+  EmbedLayerNormFusionFormat5(MODEL_FOLDER "fusion/embed_layer_norm_format5_opset13.onnx", logger_.get());
+}
+
+static void EmbedLayerNormFusionFormat6(const std::basic_string<ORTCHAR_T>& file_path, logging::Logger* logger) {
   std::shared_ptr<Model> p_model;
-  ASSERT_STATUS_OK(Model::Load(model_uri, p_model, nullptr, *logger_));
+  ASSERT_TRUE(Model::Load(file_path, p_model, nullptr, *logger).IsOK());
   Graph& graph = p_model->MainGraph();
 
   onnxruntime::GraphTransformerManager graph_transformation_mgr{5};
   graph_transformation_mgr.Register(onnxruntime::make_unique<EmbedLayerNormFusion>(), TransformerLevel::Level2);
-  auto ret = graph_transformation_mgr.ApplyTransformers(graph, TransformerLevel::Level2, *logger_);
+  auto ret = graph_transformation_mgr.ApplyTransformers(graph, TransformerLevel::Level2, *logger);
   ASSERT_TRUE(ret.IsOK());
 
   std::map<std::string, int> op_to_count = CountOpsInGraph(graph);
@@ -2947,6 +3141,14 @@ TEST_F(GraphTransformationTests, EmbedLayerNormFusionFormat6) {
   EXPECT_EQ(op_to_count["Cast"], 3);
   EXPECT_EQ(op_to_count["com.microsoft.Attention"], 1);
   EXPECT_EQ(op_to_count["com.microsoft.EmbedLayerNormalization"], 1);
+}
+
+TEST_F(GraphTransformationTests, EmbedLayerNormFusionFormat6) {
+  EmbedLayerNormFusionFormat6(MODEL_FOLDER "fusion/embed_layer_norm_format6.onnx", logger_.get());
+}
+
+TEST_F(GraphTransformationTests, EmbedLayerNormFusionFormat6_OpSet13) {
+  EmbedLayerNormFusionFormat6(MODEL_FOLDER "fusion/embed_layer_norm_format6_opset13.onnx", logger_.get());
 }
 
 static void TestEmbedLayerNormFusionDistilBert(const std::basic_string<ORTCHAR_T>& model_uri,
@@ -2977,9 +3179,33 @@ TEST_F(GraphTransformationTests, EmbedLayerNormFusionFormat7) {
   EXPECT_EQ(op_to_count["ReduceSum"], 1);
 }
 
+TEST_F(GraphTransformationTests, EmbedLayerNormFusionFormat7_OpSet13) {
+  std::map<std::string, int> op_to_count;
+  TestEmbedLayerNormFusionDistilBert(MODEL_FOLDER "fusion/embed_layer_norm_format7_opset13.onnx", op_to_count, logger_.get());
+  EXPECT_EQ(op_to_count["com.microsoft.EmbedLayerNormalization"], 1);
+  EXPECT_EQ(op_to_count["com.microsoft.Attention"], 1);
+  EXPECT_EQ(op_to_count["Cast"], 2);
+  EXPECT_EQ(op_to_count["Shape"], 0);
+  EXPECT_EQ(op_to_count["Gather"], 0);
+  EXPECT_EQ(op_to_count["Unsqueeze"], 0);
+  EXPECT_EQ(op_to_count["ReduceSum"], 1);
+}
+
 TEST_F(GraphTransformationTests, EmbedLayerNormFusionFormat8) {
   std::map<std::string, int> op_to_count;
   TestEmbedLayerNormFusionDistilBert(MODEL_FOLDER "fusion/embed_layer_norm_format8.onnx", op_to_count, logger_.get());
+  EXPECT_EQ(op_to_count["com.microsoft.EmbedLayerNormalization"], 1);
+  EXPECT_EQ(op_to_count["com.microsoft.Attention"], 1);
+  EXPECT_EQ(op_to_count["Cast"], 2);
+  EXPECT_EQ(op_to_count["Shape"], 0);
+  EXPECT_EQ(op_to_count["Gather"], 0);
+  EXPECT_EQ(op_to_count["Unsqueeze"], 0);
+  EXPECT_EQ(op_to_count["ReduceSum"], 1);
+}
+
+TEST_F(GraphTransformationTests, EmbedLayerNormFusionFormat8_OpSet13) {
+  std::map<std::string, int> op_to_count;
+  TestEmbedLayerNormFusionDistilBert(MODEL_FOLDER "fusion/embed_layer_norm_format8_opset13.onnx", op_to_count, logger_.get());
   EXPECT_EQ(op_to_count["com.microsoft.EmbedLayerNormalization"], 1);
   EXPECT_EQ(op_to_count["com.microsoft.Attention"], 1);
   EXPECT_EQ(op_to_count["Cast"], 2);
@@ -3001,15 +3227,26 @@ TEST_F(GraphTransformationTests, EmbedLayerNormFusionFormat9) {
   EXPECT_EQ(op_to_count["ReduceSum"], 1);
 }
 
-TEST_F(GraphTransformationTests, EmbedLayerNormFusionMultiple) {
-  auto model_uri = MODEL_FOLDER "fusion/embed_layer_norm_multiple.onnx";
+TEST_F(GraphTransformationTests, EmbedLayerNormFusionFormat9_OpSet13) {
+  std::map<std::string, int> op_to_count;
+  TestEmbedLayerNormFusionDistilBert(MODEL_FOLDER "fusion/embed_layer_norm_format9_opset13.onnx", op_to_count, logger_.get());
+  EXPECT_EQ(op_to_count["com.microsoft.EmbedLayerNormalization"], 1);
+  EXPECT_EQ(op_to_count["com.microsoft.Attention"], 1);
+  EXPECT_EQ(op_to_count["Cast"], 2);
+  EXPECT_EQ(op_to_count["Shape"], 1);
+  EXPECT_EQ(op_to_count["Gather"], 2);
+  EXPECT_EQ(op_to_count["Unsqueeze"], 2);
+  EXPECT_EQ(op_to_count["ReduceSum"], 1);
+}
+
+static void EmbedLayerNormFusionFormatMultiple(const std::basic_string<ORTCHAR_T>& file_path, logging::Logger* logger) {
   std::shared_ptr<Model> p_model;
-  ASSERT_STATUS_OK(Model::Load(model_uri, p_model, nullptr, *logger_));
+  ASSERT_TRUE(Model::Load(file_path, p_model, nullptr, *logger).IsOK());
   Graph& graph = p_model->MainGraph();
 
   onnxruntime::GraphTransformerManager graph_transformation_mgr{5};
   graph_transformation_mgr.Register(onnxruntime::make_unique<EmbedLayerNormFusion>(), TransformerLevel::Level2);
-  auto ret = graph_transformation_mgr.ApplyTransformers(graph, TransformerLevel::Level2, *logger_);
+  auto ret = graph_transformation_mgr.ApplyTransformers(graph, TransformerLevel::Level2, *logger);
   ASSERT_TRUE(ret.IsOK());
 
   std::map<std::string, int> op_to_count = CountOpsInGraph(graph);
@@ -3025,6 +3262,14 @@ TEST_F(GraphTransformationTests, EmbedLayerNormFusionMultiple) {
   EXPECT_EQ(op_to_count["Cast"], 6);
   EXPECT_EQ(op_to_count["com.microsoft.Attention"], 2);
   EXPECT_EQ(op_to_count["com.microsoft.EmbedLayerNormalization"], 2);
+}
+
+TEST_F(GraphTransformationTests, EmbedLayerNormFusionMultiple) {
+  EmbedLayerNormFusionFormatMultiple(MODEL_FOLDER "fusion/embed_layer_norm_multiple.onnx", logger_.get());
+}
+
+TEST_F(GraphTransformationTests, EmbedLayerNormFusionMultiple_OpSet13) {
+  EmbedLayerNormFusionFormatMultiple(MODEL_FOLDER "fusion/embed_layer_norm_multiple_opset13.onnx", logger_.get());
 }
 
 TEST_F(GraphTransformationTests, DynamicQuantizeMatMulTest) {

@@ -34,7 +34,8 @@ REGISTER_KERNEL_TYPED(float)
 REGISTER_KERNEL_TYPED(double)
 REGISTER_KERNEL_TYPED(MLFloat16)
 
-Status SliceOutUnwantedOutputSection(const void* input_data,
+Status SliceOutUnwantedOutputSection(cudaStream_t stream,
+                                     const void* input_data,
                                      const std::vector<int64_t>& input_dims,
                                      void* output_data,
                                      const std::vector<int64_t>& output_dims,
@@ -49,7 +50,7 @@ Status SliceOutUnwantedOutputSection(const void* input_data,
   // As a sanity check, ensure that the slice operator's output shape matches with the expected output shape
   ORT_ENFORCE(compute_metadata.output_dims_ == output_dims);
 
-  return SliceCuda::Impl(input_data, input_dims, output_data, compute_metadata, element_size);
+  return SliceCuda::Impl(stream, input_data, input_dims, output_data, compute_metadata, element_size);
 }
 
 template <typename T>
@@ -195,7 +196,7 @@ Status Conv<T>::UpdateState(OpKernelContext* context, bool bias_expected) const 
         s_.b_zero = nullptr;
       }
       CUDA_CALL_THROW(cudaMalloc(&s_.b_zero, malloc_size));
-      CUDA_CALL_THROW(cudaMemset(s_.b_zero, 0, malloc_size));
+      CUDA_CALL_THROW(cudaMemsetAsync(s_.b_zero, 0, malloc_size, Stream()));
     }
 
     if (!s_.cached_benchmark_results.contains(x_dims_cudnn)) {
@@ -285,9 +286,11 @@ Status Conv<T>::ComputeInternal(OpKernelContext* context) const {
   if (s_.Y->Shape().Size() == 0) {
     return Status::OK();
   }
+  const auto alpha = Consts<CudaT>::One;
+  const auto beta = Consts<CudaT>::Zero;
   IAllocatorUniquePtr<void> workspace = GetWorkSpace();
   CUDNN_RETURN_IF_ERROR(cudnnConvolutionForward(CudnnHandle(),
-                                                &alpha_,
+                                                &alpha,
                                                 s_.x_tensor,
                                                 s_.x_data,
                                                 s_.w_desc,
@@ -296,17 +299,17 @@ Status Conv<T>::ComputeInternal(OpKernelContext* context) const {
                                                 s_.algo,
                                                 workspace.get(),
                                                 s_.workspace_bytes,
-                                                &beta_,
+                                                &beta,
                                                 s_.y_tensor,
                                                 s_.y_data));
   if (nullptr != s_.b_data) {
-    CUDNN_RETURN_IF_ERROR(cudnnAddTensor(CudnnHandle(), &alpha_, s_.b_tensor, s_.b_data,
-                                         &alpha_, s_.y_tensor, s_.y_data));
+    CUDNN_RETURN_IF_ERROR(cudnnAddTensor(CudnnHandle(), &alpha, s_.b_tensor, s_.b_data,
+                                         &alpha, s_.y_tensor, s_.y_data));
   }
   // To deal with asymmetric padding, we may have over-padded on one or both sides of the spatial dimensions
   // This may have lead to extra results that are unnecessary and hence we slice that off here
   if (s_.post_slicing_required) {
-    SliceOutUnwantedOutputSection(s_.y_data, s_.y_dims_with_adjusted_pads, s_.Y->MutableDataRaw(),
+    SliceOutUnwantedOutputSection(Stream(), s_.y_data, s_.y_dims_with_adjusted_pads, s_.Y->MutableDataRaw(),
                                   s_.y_dims, s_.slice_starts, s_.slice_ends, s_.slice_axes, s_.element_size);
   }
   return Status::OK();

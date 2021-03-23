@@ -248,7 +248,6 @@ We could take steps to handle this scenario in a full build, but for consistency
 on any ORT format model.
 */
 TEST(OrtModelOnlyTests, ValidateOrtFormatModelDoesNotRunOptimizersInFullBuild) {
-  // we have tests that use a pre-created minst.onnx.ort, so make the naming for the unit test generated file clearer
   const std::basic_string<ORTCHAR_T> ort_file = ORT_TSTR("testdata/mnist.onnx.test_output.ort");
   SaveAndCompareModels("testdata/mnist.onnx", ort_file);
 
@@ -308,10 +307,7 @@ TEST(OrtModelOnlyTests, SparseInitializerHandling) {
   SaveAndCompareModels("testdata/ort_minimal_test_models/sparse_initializer_handling.onnx", ort_file);
 
   SessionOptions so;
-  so.session_logid = "LoadOrtFormat";
-  // not strictly necessary - type should be inferred from the filename, but to be sure we're testing what we
-  // think we're testing set it.
-  so.AddConfigEntry(kOrtSessionOptionsConfigLoadModelFormat, "ORT");
+  so.session_logid = "SparseInitializerHandling";
   InferenceSessionWrapper session_object{so, GetEnvironment()};
   ASSERT_STATUS_OK(session_object.Load(ort_file));
   ASSERT_STATUS_OK(session_object.Initialize());
@@ -321,6 +317,13 @@ TEST(OrtModelOnlyTests, SparseInitializerHandling) {
   ASSERT_EQ(init_list->size(), 1U);
   const auto& init_def = *init_list->front();
   ASSERT_EQ(init_def.Name(), "x");
+}
+
+// regression test to make sure the model path is correctly passed through when serializing a tensor attribute
+TEST(OrtModelOnlyTests, TensorAttributeSerialization) {
+  const std::basic_string<ORTCHAR_T> ort_file =
+      ORT_TSTR("testdata/ort_minimal_test_models/tensor_attribute.onnx.test_output.ort");
+  SaveAndCompareModels("testdata/ort_minimal_test_models/tensor_attribute.onnx", ort_file);
 }
 
 #if !defined(DISABLE_ML_OPS)
@@ -371,7 +374,7 @@ TEST(OrtModelOnlyTests, SerializeToOrtFormatMLOps) {
 
 // test loading ORT format model with sparse initializers
 TEST(OrtModelOnlyTests, LoadSparseInitializersOrtFormat) {
-  const std::basic_string<ORTCHAR_T> ort_file = ORT_TSTR("testdata/sparse_initializer_handling.onnx.ort");
+  const std::basic_string<ORTCHAR_T> ort_file = ORT_TSTR("testdata/ort_minimal_test_models/sparse_initializer_handling.onnx.ort");
   SessionOptions so;
   so.session_logid = "LoadOrtFormat";
   so.AddConfigEntry(kOrtSessionOptionsConfigLoadModelFormat, "ORT");
