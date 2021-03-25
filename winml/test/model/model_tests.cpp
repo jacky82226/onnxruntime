@@ -162,7 +162,7 @@ static std::vector<ITestCase*> GetAllTestCases() {
   std::vector<std::basic_string<PATH_CHAR_TYPE>> whitelistedTestCases;
   double perSampleTolerance = 1e-3;
   double relativePerSampleTolerance = 1e-3;
-  std::unordered_set<std::basic_string<ORTCHAR_T>> allDisabledTests;
+  std::unordered_set<std::basic_string<ORTCHAR_T>> allDisabledTests =;
   std::vector<std::basic_string<PATH_CHAR_TYPE>> dataDirs;
   auto testDataPath = GetTestDataPath();
   if (testDataPath == "") return tests;
@@ -212,11 +212,11 @@ static std::vector<ITestCase*> GetAllTestCases() {
       ORT_TSTR("tf_resnet_v2_152"),
       ORT_TSTR("vgg19"),
       ORT_TSTR("yolov3"),
-      ORT_TSTR("zfnet512"),
-      ORT_TSTR("cntk_simple_seg")
+      ORT_TSTR("zfnet512")
   };
   allDisabledTests.insert(std::begin(x86DisabledTests), std::end(x86DisabledTests));
 #endif
+allDisabledTests.insert(ORT_TSTR("cntk_simple_seg"));
 
   
   WINML_EXPECT_NO_THROW(LoadTests(dataDirs, whitelistedTestCases, perSampleTolerance, relativePerSampleTolerance,
