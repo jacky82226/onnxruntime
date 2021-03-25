@@ -162,7 +162,7 @@ static std::vector<ITestCase*> GetAllTestCases() {
   std::vector<std::basic_string<PATH_CHAR_TYPE>> whitelistedTestCases;
   double perSampleTolerance = 1e-3;
   double relativePerSampleTolerance = 1e-3;
-  std::unordered_set<std::basic_string<ORTCHAR_T>> allDisabledTests =;
+  std::unordered_set<std::basic_string<ORTCHAR_T>> allDisabledTests;
   std::vector<std::basic_string<PATH_CHAR_TYPE>> dataDirs;
   auto testDataPath = GetTestDataPath();
   if (testDataPath == "") return tests;
