@@ -787,7 +787,7 @@ namespace Microsoft.ML.OnnxRuntime.Tests
                 { "test_min_uint16", "node test error"},
                 { "test_adam_multiple", "node test error"},
                 { "test_loop13_seq", "node test error"},
-                { "test_convtranspose_autopad_same", "TODO: enable this after ONNX commit has bumped (1.10)"},
+                { "test_convtranspose_autopad_same", "node test error"},
                 { "test_training_dropout_default_mask", "node test error"},
                 { "test_min_int8", "node test error"},
                 { "test_cast_FLOAT_to_STRING", "node test error"},
