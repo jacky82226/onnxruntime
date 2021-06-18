@@ -54,14 +54,14 @@ export declare namespace InferenceSession {
     /**
      * The intra OP threads number.
      *
-     * This setting is available only in ONNXRuntime (Node.js binding and react-native) or WebAssembly backend
+     * This setting is available only in ONNXRuntime (Node.js binding and react-native).
      */
     intraOpNumThreads?: number;
 
     /**
      * The inter OP threads number.
      *
-     * This setting is available only in ONNXRuntime (Node.js binding and react-native) or WebAssembly backend
+     * This setting is available only in ONNXRuntime (Node.js binding and react-native).
      */
     interOpNumThreads?: number;
 
@@ -94,6 +94,20 @@ export declare namespace InferenceSession {
     executionMode?: 'sequential'|'parallel';
 
     /**
+     * Wether enable profiling.
+     *
+     * This setting is a placeholder for a future use.
+     */
+    enableProfiling?: boolean;
+
+    /**
+     * File prefix for profiling.
+     *
+     * This setting is a placeholder for a future use.
+     */
+    profileFilePrefix?: string;
+
+    /**
      * Log ID.
      *
      * This setting is available only in ONNXRuntime (Node.js binding and react-native) or WebAssembly backend
@@ -107,6 +121,36 @@ export declare namespace InferenceSession {
      * This setting is available only in ONNXRuntime (Node.js binding and react-native) or WebAssembly backend
      */
     logSeverityLevel?: 0|1|2|3|4;
+
+    /**
+     * Log verbosity level.
+     *
+     * This setting is available only in WebAssembly backend. Will support Node.js binding and react-native later
+     */
+    logVerbosityLevel?: number;
+
+    /**
+     * Store configurations for a session. See
+     * https://github.com/microsoft/onnxruntime/blob/master/include/onnxruntime/core/session/
+     * onnxruntime_session_options_config_keys.h
+     *
+     * In example,
+     *
+     * ```js
+     * extra: {
+     *   session: {
+     *     set_denormal_as_zero: "1",
+     *     disable_prepacking: "1"
+     *   },
+     *   optimization: {
+     *     enable_gelu_approximation: "1"
+     *   }
+     * }
+     * ```
+     *
+     * This setting is available only in WebAssembly backend. Will support Node.js binding and react-native later
+     */
+    extra?: Record<string, unknown>;
   }
 
   //#region execution providers
@@ -164,11 +208,44 @@ export declare namespace InferenceSession {
     logSeverityLevel?: 0|1|2|3|4;
 
     /**
+     * Log verbosity level.
+     *
+     * This setting is available only in WebAssembly backend. Will support Node.js binding and react-native later
+     */
+    logVerbosityLevel?: number;
+
+    /**
+     * Terminate all incomplete OrtRun calls as soon as possible if true
+     *
+     * This setting is available only in WebAssembly backend. Will support Node.js binding and react-native later
+     */
+    terminate?: boolean;
+
+    /**
      * A tag for the Run() calls using this
      *
      * This setting is available only in ONNXRuntime (Node.js binding and react-native) or WebAssembly backend
      */
     tag?: string;
+
+    /**
+     * Set a single run configuration entry. See
+     * https://github.com/microsoft/onnxruntime/blob/master/include/onnxruntime/core/session/
+     * onnxruntime_run_options_config_keys.h
+     *
+     * In example,
+     *
+     * ```js
+     * extra: {
+     *   memory: {
+     *     enable_memory_arena_shrinkage: "1",
+     *   }
+     * }
+     * ```
+     *
+     * This setting is available only in WebAssembly backend. Will support Node.js binding and react-native later
+     */
+    extra?: Record<string, unknown>;
   }
 
   //#endregion
@@ -192,8 +269,8 @@ export interface InferenceSession {
   /**
    * Execute the model asynchronously with the given feeds and options.
    *
-   * @param feeds Representation of the model input. See type description of `InferenceSession.InputType` for detail.
-   * @param options Optional. A set of options that controls the behavior of model inference.
+   * @param feeds - Representation of the model input. See type description of `InferenceSession.InputType` for detail.
+   * @param options - Optional. A set of options that controls the behavior of model inference.
    * @returns A promise that resolves to a map, which uses output names as keys and OnnxValue as corresponding values.
    */
   run(feeds: InferenceSession.FeedsType, options?: InferenceSession.RunOptions): Promise<InferenceSession.ReturnType>;
@@ -201,14 +278,28 @@ export interface InferenceSession {
   /**
    * Execute the model asynchronously with the given feeds, fetches and options.
    *
-   * @param feeds Representation of the model input. See type description of `InferenceSession.InputType` for detail.
-   * @param fetches Representation of the model output. See type description of `InferenceSession.OutputType` for
+   * @param feeds - Representation of the model input. See type description of `InferenceSession.InputType` for detail.
+   * @param fetches - Representation of the model output. See type description of `InferenceSession.OutputType` for
    * detail.
-   * @param options Optional. A set of options that controls the behavior of model inference.
+   * @param options - Optional. A set of options that controls the behavior of model inference.
    * @returns A promise that resolves to a map, which uses output names as keys and OnnxValue as corresponding values.
    */
   run(feeds: InferenceSession.FeedsType, fetches: InferenceSession.FetchesType,
       options?: InferenceSession.RunOptions): Promise<InferenceSession.ReturnType>;
+
+  //#endregion
+
+  //#region profiling
+
+  /**
+   * Start profiling.
+   */
+  startProfiling(): void;
+
+  /**
+   * End profiling.
+   */
+  endProfiling(): void;
 
   //#endregion
 
@@ -243,8 +334,8 @@ export interface InferenceSessionFactory {
   /**
    * Create a new inference session and load model asynchronously from an ONNX model file.
    *
-   * @param uri The URI or file path of the model to load.
-   * @param options specify configuration for creating a new inference session.
+   * @param uri - The URI or file path of the model to load.
+   * @param options - specify configuration for creating a new inference session.
    * @returns A promise that resolves to an InferenceSession object.
    */
   create(uri: string, options?: InferenceSession.SessionOptions): Promise<InferenceSession>;
@@ -252,8 +343,8 @@ export interface InferenceSessionFactory {
   /**
    * Create a new inference session and load model asynchronously from an array bufer.
    *
-   * @param buffer An ArrayBuffer representation of an ONNX model.
-   * @param options specify configuration for creating a new inference session.
+   * @param buffer - An ArrayBuffer representation of an ONNX model.
+   * @param options - specify configuration for creating a new inference session.
    * @returns A promise that resolves to an InferenceSession object.
    */
   create(buffer: ArrayBufferLike, options?: InferenceSession.SessionOptions): Promise<InferenceSession>;
@@ -261,10 +352,10 @@ export interface InferenceSessionFactory {
   /**
    * Create a new inference session and load model asynchronously from segment of an array bufer.
    *
-   * @param buffer An ArrayBuffer representation of an ONNX model.
-   * @param byteOffset The beginning of the specified portion of the array buffer.
-   * @param byteLength The length in bytes of the array buffer.
-   * @param options specify configuration for creating a new inference session.
+   * @param buffer - An ArrayBuffer representation of an ONNX model.
+   * @param byteOffset - The beginning of the specified portion of the array buffer.
+   * @param byteLength - The length in bytes of the array buffer.
+   * @param options - specify configuration for creating a new inference session.
    * @returns A promise that resolves to an InferenceSession object.
    */
   create(buffer: ArrayBufferLike, byteOffset: number, byteLength?: number, options?: InferenceSession.SessionOptions):
@@ -273,15 +364,14 @@ export interface InferenceSessionFactory {
   /**
    * Create a new inference session and load model asynchronously from a Uint8Array.
    *
-   * @param buffer A Uint8Array representation of an ONNX model.
-   * @param options specify configuration for creating a new inference session.
+   * @param buffer - A Uint8Array representation of an ONNX model.
+   * @param options - specify configuration for creating a new inference session.
    * @returns A promise that resolves to an InferenceSession object.
    */
   create(buffer: Uint8Array, options?: InferenceSession.SessionOptions): Promise<InferenceSession>;
 
   //#endregion
 }
-
 
 // eslint-disable-next-line @typescript-eslint/naming-convention
 export const InferenceSession: InferenceSessionFactory = InferenceSessionImpl;

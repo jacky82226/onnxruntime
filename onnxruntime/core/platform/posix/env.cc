@@ -354,10 +354,6 @@ class PosixEnv : public Env {
     return S_ISDIR(sb.st_mode);
   }
 
-  std::string GetRuntimePath() const override {
-    return "./";
-  }
-
   common::Status CreateFolder(const std::string& path) const override {
     size_t pos = 0;
     do {
@@ -415,9 +411,9 @@ class PosixEnv : public Env {
     return Status::OK();
   }
 
-  common::Status LoadDynamicLibrary(const std::string& library_filename, void** handle) const override {
+  common::Status LoadDynamicLibrary(const std::string& library_filename, bool global_symbols, void** handle) const override {
     dlerror();  // clear any old error_str
-    *handle = dlopen(library_filename.c_str(), RTLD_NOW | RTLD_LOCAL);
+    *handle = dlopen(library_filename.c_str(), RTLD_NOW | (global_symbols ? RTLD_GLOBAL : RTLD_LOCAL));
     char* error_str = dlerror();
     if (!*handle) {
       return common::Status(common::ONNXRUNTIME, common::FAIL,

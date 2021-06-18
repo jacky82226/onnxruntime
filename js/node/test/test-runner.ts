@@ -2,9 +2,8 @@
 // Licensed under the MIT License.
 
 import * as fs from 'fs-extra';
+import {InferenceSession, Tensor} from 'onnxruntime-common';
 import * as path from 'path';
-
-import {InferenceSession, Tensor} from '../lib';
 
 import {assertTensorEqual, loadTensorFromFile, shouldSkipModel} from './test-utils';
 
@@ -88,12 +87,12 @@ export function run(testDataFolder: string): void {
             }
 
             if (session !== null) {
-              const feeds = {};
+              const feeds: Record<string, Tensor> = {};
               if (inputs.length !== session.inputNames.length) {
                 throw new RangeError('input length does not match name list');
               }
               for (let i = 0; i < inputs.length; i++) {
-                feeds[session.inputNames[i]] = inputs[i];
+                feeds[session.inputNames[i]] = inputs[i]!;
               }
               const outputs = await session.run(feeds);
 

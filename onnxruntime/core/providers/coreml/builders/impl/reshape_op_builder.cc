@@ -25,7 +25,7 @@ class ReshapeOpBuilder : public BaseOpBuilder {
 
   // Operator support related
  private:
-  bool IsOpSupportedImpl(const InitializedTensorSet& initializers, const Node& node,
+  bool IsOpSupportedImpl(const Node& node, const OpBuilderInputParams& input_params,
                          const logging::Logger& logger) const override;
 
   // Reshape opset 4- uses attributes for new shape which we do not support for now
@@ -65,10 +65,11 @@ Status ReshapeOpBuilder::AddToModelBuilderImpl(ModelBuilder& model_builder,
 
 // Operator support related
 
-bool ReshapeOpBuilder::IsOpSupportedImpl(const InitializedTensorSet& initializers, const Node& node,
+bool ReshapeOpBuilder::IsOpSupportedImpl(const Node& node, const OpBuilderInputParams& input_params,
                                          const logging::Logger& logger) const {
   const auto& input_defs = node.InputDefs();
   const auto& perm_name = input_defs[1]->Name();
+  const auto& initializers = input_params.graph_viewer.GetAllInitializedTensors();
   if (!Contains(initializers, perm_name)) {
     LOGS(logger, VERBOSE) << "New shape of reshape must be a constant initializer";
     return false;
@@ -107,7 +108,7 @@ bool ReshapeOpBuilder::IsOpSupportedImpl(const InitializedTensorSet& initializer
 }
 
 void CreateReshapeOpBuilder(const std::string& op_type, OpBuilderRegistrations& op_registrations) {
-  op_registrations.builders.push_back(onnxruntime::make_unique<ReshapeOpBuilder>());
+  op_registrations.builders.push_back(std::make_unique<ReshapeOpBuilder>());
   op_registrations.op_builder_map.emplace(op_type, op_registrations.builders.back().get());
 }
 

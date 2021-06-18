@@ -23,7 +23,7 @@ ModelBuilder::ModelBuilder(const GraphViewer& graph_viewer, const logging::Logge
 }
 
 Status ModelBuilder::Initialize() {
-  coreml_model_ = onnxruntime::make_unique<CoreML::Specification::Model>();
+  coreml_model_ = std::make_unique<CoreML::Specification::Model>();
   {  // initialize CoreML model
     // We support CorelML Specification Version 4 (Core ML 3)
     coreml_model_->set_specificationversion(4);
@@ -150,6 +150,9 @@ Status ModelBuilder::RegisterModelInputOutput(const NodeArg& node_arg, bool is_i
     switch (data_type) {
       case ONNX_NAMESPACE::TensorProto_DataType_FLOAT:
         multi_array->set_datatype(COREML_SPEC::ArrayFeatureType::FLOAT32);
+        break;
+      case ONNX_NAMESPACE::TensorProto_DataType_INT32:
+        multi_array->set_datatype(COREML_SPEC::ArrayFeatureType::INT32);
         break;
       default: {
         // TODO: support other type
