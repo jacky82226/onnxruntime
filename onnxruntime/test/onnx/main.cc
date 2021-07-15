@@ -309,27 +309,17 @@ int real_main(int argc, char* argv[], Ort::Env& env) {
 
     if (enable_tensorrt) {
 #ifdef USE_TENSORRT
-      OrtTensorRTProviderOptions tensorrt_options{
-          0,
-          0,
-          nullptr,
-          0,
-          1 << 30,
-          0,
-          0,
-          nullptr,
-          0};
-
       OrtCUDAProviderOptions cuda_options{
-          0,
+          device_id,
           OrtCudnnConvAlgoSearch::EXHAUSTIVE,
           std::numeric_limits<size_t>::max(),
           0,
           true,
           0,
-          nullptr};
+          nullptr,
+          nullptr};  // TODO: Support arena configuration for users of test runner
 
-      sf.AppendExecutionProvider_TensorRT(tensorrt_options);
+      Ort::ThrowOnError(OrtSessionOptionsAppendExecutionProvider_Tensorrt(sf, device_id));
       sf.AppendExecutionProvider_CUDA(cuda_options);
 #else
       fprintf(stderr, "TensorRT is not supported in this build");
@@ -355,7 +345,8 @@ int real_main(int argc, char* argv[], Ort::Env& env) {
           0,
           true,
           0,
-          nullptr};
+          nullptr,
+          nullptr};  // TODO: Support arena configuration for users of test runner
       sf.AppendExecutionProvider_CUDA(cuda_options);
 #else
       fprintf(stderr, "CUDA is not supported in this build");
@@ -487,6 +478,9 @@ int real_main(int argc, char* argv[], Ort::Env& env) {
             ORT_TSTR("operator_non_float_params"),
             ORT_TSTR("operator_params"),
             ORT_TSTR("operator_pow"),
+            ORT_TSTR("bernoulli"),
+            ORT_TSTR("bernoulli_double"),
+            ORT_TSTR("bernoulli_seed")
         };
 
     static const ORTCHAR_T* cuda_flaky_tests[] = {
@@ -593,6 +587,7 @@ int real_main(int argc, char* argv[], Ort::Env& env) {
       {"sequence_insert_at_back", "onnx currently not supporting loading segment", {}},
       {"sequence_insert_at_front", "onnx currently not supporting loading segment", {}},
       {"loop13_seq", "ORT api does not currently support creating empty sequences (needed for this test)", {}},
+      {"cntk_simple_seg", "Bad onnx test output caused by wrong SAME_UPPER/SAME_LOWER for ConvTranspose", {}},
   };
 
 #ifdef DISABLE_ML_OPS

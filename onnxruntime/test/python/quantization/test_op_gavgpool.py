@@ -14,7 +14,7 @@ from onnxruntime.quantization import quantize_static, quantize_dynamic
 from op_test_utils import TestDataFeeds, check_model_correctness, check_op_type_count
 
 
-class TestOpQuatizerPad(unittest.TestCase):
+class TestOpGlobalAveragePool(unittest.TestCase):
     def input_feeds(self, n, name2shape):
         input_data_list = []
         for i in range(n):
@@ -69,7 +69,7 @@ class TestOpQuatizerPad(unittest.TestCase):
         graph = helper.make_graph([gavgpool_node_1, expand_node, conv_node, gavgpool_node_2], graph_name,
                                   [input_tensor], [output_tensor], initializer=initializers)
         model = helper.make_model(graph, opset_imports=[helper.make_opsetid("", 13)])
-        model.ir_version = onnx.IR_VERSION
+        model.ir_version = 7 # use stable onnx ir version
 
         onnx.save(model, output_model_path)
 
